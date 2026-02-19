@@ -180,15 +180,57 @@ download_and_convert() {
     grep -q "^log-level:" "$temp_file" || echo "log-level: info" >> "$temp_file"
     grep -q "^external-controller:" "$temp_file" || echo "external-controller: 127.0.0.1:9090" >> "$temp_file"
     
-    # 4. 确保有规则部分
+    # 4. 关键修复：强制检查并修复 MATCH 规则
+    # 4.1 如果没有 rules 部分，添加完整规则集
     if ! grep -q "^rules:" "$temp_file"; then
-        info "配置缺少规则部分，添加默认规则..."
+        info "配置缺少规则部分，添加标准规则集..."
         echo "" >> "$temp_file"
         echo "rules:" >> "$temp_file"
-        echo "  - MATCH,PROXY" >> "$temp_file"
+        echo "  - IP-CIDR,127.0.0.0/8,🎯 全球直连,no-resolve" >> "$temp_file"
+        echo "  - GEOIP,CN,🎯 全球直连,no-resolve" >> "$temp_file"
+        echo "  - MATCH,🔰 节点选择" >> "$temp_file"
+    # 4.2 如果有 rules 但没有 MATCH 兜底规则，删除残缺的 rules 并追加标准规则集
+    elif ! grep -qE "^[[:space:]]*- MATCH," "$temp_file"; then
+        info "配置缺少 MATCH 兜底规则，修复规则集..."
+        sed -i '/^rules:/,$d' "$temp_file"
+        echo "" >> "$temp_file"
+        echo "rules:" >> "$temp_file"
+        echo "  - IP-CIDR,127.0.0.0/8,🎯 全球直连,no-resolve" >> "$temp_file"
+        echo "  - GEOIP,CN,🎯 全球直连,no-resolve" >> "$temp_file"
+        echo "  - MATCH,🔰 节点选择" >> "$temp_file"
     fi
     
-    # 5. 询问是否禁用 GEOIP
+    # 5. 关键修复：检查并修复未定义的 proxy-groups
+    # 检查是否引用了 🎯 全球直连 但未定义
+    if grep -q ",🎯 全球直连" "$temp_file" && ! grep -q "name: 🎯 全球直连" "$temp_file"; then
+        info "修复未定义的 proxy-group: 🎯 全球直连"
+        # 在 proxy-groups: 后添加定义
+        if grep -q "^proxy-groups:" "$temp_file"; then
+            sed -i '/^proxy-groups:/a\  - name: 🎯 全球直连\n    type: select\n    proxies:\n      - DIRECT' "$temp_file"
+        else
+            # 如果没有 proxy-groups 部分，添加完整的 proxy-groups
+            echo "" >> "$temp_file"
+            echo "proxy-groups:" >> "$temp_file"
+            echo "  - name: 🔰 节点选择" >> "$temp_file"
+            echo "    type: select" >> "$temp_file"
+            echo "    proxies:" >> "$temp_file"
+            echo "      - DIRECT" >> "$temp_file"
+            echo "  - name: 🎯 全球直连" >> "$temp_file"
+            echo "    type: select" >> "$temp_file"
+            echo "    proxies:" >> "$temp_file"
+            echo "      - DIRECT" >> "$temp_file"
+        fi
+    fi
+    
+    # 检查是否引用了 ♻️ 自动选择 但未定义
+    if grep -q "♻️ 自动选择" "$temp_file" && ! grep -q "name: ♻️ 自动选择" "$temp_file"; then
+        info "修复未定义的 proxy-group: ♻️ 自动选择"
+        if grep -q "^proxy-groups:" "$temp_file"; then
+            sed -i '/^proxy-groups:/a\  - name: ♻️ 自动选择\n    type: url-test\n    url: http://www.gstatic.com/generate_204\n    interval: 300\n    tolerance: 50\n    proxies:' "$temp_file"
+        fi
+    fi
+    
+    # 6. 询问是否禁用 GEOIP
     if grep -q "GEOIP" "$temp_file" 2>/dev/null; then
         echo ""
         info "检测到 GEOIP 规则"
