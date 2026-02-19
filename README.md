@@ -11,8 +11,8 @@
 - 🔀 支持 TPROXY 透明代理
 - 📦 集成 systemd 服务
 - 📥 下载失败时支持手动输入下载地址
+- 🔄 订阅管理工具 (mihomo-sub)
 - 🔧 配置管理工具 (mihomo-config)
-- 🔄 URL 转换工具 (mihomo-convert)
 
 ## 快速开始
 
@@ -36,17 +36,43 @@ sudo bash install.sh
 
 安装后会提供以下命令行工具：
 
+### mihomo-sub - 订阅管理
+
+```bash
+# 添加订阅链接
+sudo mihomo-sub add "https://your-subscription-url"
+
+# 更新当前订阅
+sudo mihomo-sub update
+
+# 列出可用备份
+sudo mihomo-sub list
+
+# 恢复备份
+sudo mihomo-sub restore 1
+
+# 查看当前订阅
+sudo mihomo-sub show
+
+# 测试配置
+sudo mihomo-sub test
+
+# 交互式菜单
+sudo mihomo-sub menu
+```
+
+**订阅管理功能：**
+- 自动检测订阅格式（Base64、Clash YAML 等）
+- 自动格式转换（使用在线 API）
+- 自动补充必要配置项（端口、规则等）
+- 自动备份历史配置
+- 支持一键恢复
+
 ### mihomo-config - 配置管理
 
 ```bash
 # 查看状态
 sudo mihomo-config status
-
-# 添加订阅
-sudo mihomo-config add-sub "https://your-subscription-url" myprovider
-
-# 列出订阅
-sudo mihomo-config list-subs
 
 # 设置端口
 sudo mihomo-config set-port 7890
@@ -65,22 +91,6 @@ sudo mihomo-config edit
 # 备份和恢复
 sudo mihomo-config backup
 sudo mihomo-config restore /etc/mihomo/config.yaml.backup.xxx
-```
-
-### mihomo-convert - URL 转换
-
-```bash
-# 转换 SS/VMess/VLESS/Trojan 链接为 YAML
-mihomo-convert 'ss://method:pass@server:port#name'
-mihomo-convert 'vmess://...'
-mihomo-convert 'trojan://...'
-mihomo-convert 'vless://...'
-
-# 转换订阅链接
-mihomo-convert -t yaml -o nodes.yaml 'https://your-subscription-url'
-
-# 从文件转换
-cat urls.txt | mihomo-convert -t yaml > nodes.yaml
 ```
 
 ## 使用方法
@@ -138,73 +148,24 @@ sudo /etc/mihomo/disable-tproxy.sh
 
 ## 配置示例
 
-### 使用 mihomo-config 添加订阅
+### 使用 mihomo-sub 添加订阅
 
 ```bash
-sudo mihomo-config add-sub "https://your-subscription-url" myprovider
+# 添加订阅（支持多种格式）
+sudo mihomo-sub add "https://your-subscription-url"
+
+# 脚本会自动：
+# 1. 下载订阅内容
+# 2. 检测并转换格式（Base64/V2Ray/Clash）
+# 3. 补充端口、规则等必要配置
+# 4. 验证配置有效性
+# 5. 备份旧配置
+# 6. 应用新配置
 ```
 
-然后编辑配置文件添加代理组：
+### 手动配置节点
 
-```bash
-sudo mihomo-config edit
-```
-
-添加以下内容：
-
-```yaml
-proxy-providers:
-  myprovider:
-    type: http
-    url: "https://your-subscription-url"
-    interval: 3600
-    path: ./proxy-providers/myprovider.yaml
-    health-check:
-      enable: true
-      url: https://www.gstatic.com/generate_204
-      interval: 300
-
-proxy-groups:
-  - name: "🚀 节点选择"
-    type: select
-    use:
-      - myprovider
-    proxies:
-      - DIRECT
-
-  - name: "⚡ 自动选择"
-    type: url-test
-    url: https://www.gstatic.com/generate_204
-    interval: 300
-    tolerance: 50
-    use:
-      - myprovider
-```
-
-### 使用 mihomo-convert 转换节点
-
-```bash
-# 转换多个节点链接
-mihomo-convert 'ss://aes-256-gcm:password@hk.example.com:8388#香港节点'
-mihomo-convert 'vmess://eyJhZGQiOiJzZXJ2ZXIiLC...' 
-mihomo-convert 'trojan://password@us.example.com:443?sni=example.com#美国节点'
-```
-
-输出结果：
-
-```yaml
-proxies:
-  - name: "香港节点"
-    type: ss
-    server: hk.example.com
-    port: 8388
-    cipher: aes-256-gcm
-    password: "password"
-```
-
-### 手动添加节点
-
-编辑配置文件：
+如果只有单个节点链接，可以手动编辑配置文件：
 
 ```bash
 sudo nano /etc/mihomo/config.yaml
@@ -232,6 +193,30 @@ proxies:
     port: 8388
     cipher: aes-256-gcm
     password: your-password
+
+proxy-groups:
+  - name: "🚀 节点选择"
+    type: select
+    proxies:
+      - "香港节点"
+      - "美国节点"
+
+  - name: "🎯 全球直连"
+    type: select
+    proxies:
+      - DIRECT
+
+  - name: "🐟 漏网之鱼"
+    type: select
+    proxies:
+      - "🚀 节点选择"
+      - DIRECT
+
+rules:
+  - DOMAIN-SUFFIX,local,DIRECT
+  - IP-CIDR,127.0.0.0/8,DIRECT
+  - GEOIP,CN,DIRECT
+  - MATCH,🐟 漏网之鱼
 ```
 
 ## 目录结构
@@ -239,17 +224,18 @@ proxies:
 ```
 /etc/mihomo/
 ├── config.yaml          # 主配置文件
-├── subscriptions.txt    # 订阅列表
+├── subscription.url     # 当前订阅链接
+├── backups/             # 配置备份目录
 ├── proxy.sh             # 启用环境变量代理
 ├── unproxy.sh           # 取消环境变量代理
 ├── enable-tproxy.sh     # 启用透明代理
-├── disable-tproxy.sh    # 关闭透明代理
-└── config.yaml.backup.* # 配置文件备份
+└── disable-tproxy.sh    # 关闭透明代理
 
 /usr/local/bin/
 ├── mihomo               # mihomo 主程序
+├── mihomo-sub           # 订阅管理工具
 ├── mihomo-config        # 配置管理工具
-└── mihomo-convert       # URL 转换工具
+└── mihomo-update        # 更新脚本
 ```
 
 ## 卸载
@@ -264,8 +250,9 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/MakerG9527/mihomo-d
 sudo systemctl stop mihomo
 sudo systemctl disable mihomo
 sudo rm -f /usr/local/bin/mihomo
+sudo rm -f /usr/local/bin/mihomo-sub
 sudo rm -f /usr/local/bin/mihomo-config
-sudo rm -f /usr/local/bin/mihomo-convert
+sudo rm -f /usr/local/bin/mihomo-update
 sudo rm -rf /etc/mihomo
 sudo rm -f /etc/systemd/system/mihomo.service
 sudo rm -f /etc/profile.d/mihomo-proxy.sh

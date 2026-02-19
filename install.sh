@@ -416,11 +416,11 @@ install_tools() {
         echo -e "${GREEN}mihomo-config 已安装${NC}"
     fi
     
-    # 安装 mihomo-convert
-    if [ -f "$SCRIPT_DIR/mihomo-convert" ]; then
-        cp "$SCRIPT_DIR/mihomo-convert" "$INSTALL_DIR/"
-        chmod +x "$INSTALL_DIR/mihomo-convert"
-        echo -e "${GREEN}mihomo-convert 已安装${NC}"
+    # 安装 mihomo-sub
+    if [ -f "$SCRIPT_DIR/mihomo-sub" ]; then
+        cp "$SCRIPT_DIR/mihomo-sub" "$INSTALL_DIR/"
+        chmod +x "$INSTALL_DIR/mihomo-sub"
+        echo -e "${GREEN}mihomo-sub 已安装${NC}"
     fi
     
     # 安装更新脚本
@@ -443,15 +443,18 @@ show_usage() {
     echo "  systemctl status mihomo   # 查看状态"
     echo "  mihomo -v                 # 查看版本"
     echo ""
+    echo -e "${BLUE}订阅管理:${NC}"
+    echo "  mihomo-sub add <url>      # 添加订阅链接"
+    echo "  mihomo-sub update         # 更新订阅"
+    echo "  mihomo-sub list           # 列出备份"
+    echo "  mihomo-sub restore [n]    # 恢复备份"
+    echo "  mihomo-sub menu           # 交互式菜单"
+    echo ""
     echo -e "${BLUE}配置工具:${NC}"
     echo "  mihomo-config status      # 查看配置状态"
-    echo "  mihomo-config add-sub <url> [name]  # 添加订阅"
-    echo "  mihomo-config list-subs   # 列出订阅"
     echo "  mihomo-config edit        # 编辑配置"
-    echo ""
-    echo -e "${BLUE}URL 转换:${NC}"
-    echo "  mihomo-convert 'ss://...' # 转换节点链接"
-    echo "  mihomo-convert -o nodes.yaml 'https://sub-url'"
+    echo "  mihomo-config test        # 测试配置"
+    echo "  mihomo-config backup      # 备份配置"
     echo ""
     echo -e "${BLUE}配置文件:${NC}"
     echo "  $CONFIG_DIR/config.yaml   # 主配置文件"
@@ -461,7 +464,7 @@ show_usage() {
     echo "  SOCKS5:     127.0.0.1:7891"
     echo "  Mixed:      127.0.0.1:7892"
     echo ""
-    echo -e "${YELLOW}请编辑 $CONFIG_DIR/config.yaml 添加你的订阅链接或代理节点${NC}"
+    echo -e "${YELLOW}提示: 使用 'mihomo-sub add <订阅链接>' 快速配置代理${NC}"
     echo ""
 }
 

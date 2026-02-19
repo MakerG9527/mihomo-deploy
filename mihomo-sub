@@ -1,0 +1,415 @@
+#!/bin/bash
+# Mihomo 订阅管理脚本
+# 用于下载、转换和管理订阅配置
+
+set -e
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+CONFIG_DIR="${CONFIG_DIR:-/etc/mihomo}"
+CONFIG_FILE="$CONFIG_DIR/config.yaml"
+SUB_FILE="$CONFIG_DIR/subscription.url"
+BACKUP_DIR="$CONFIG_DIR/backups"
+
+# 订阅转换 API
+CONVERT_API="https://sub.xeton.dev/sub?target=clash&url="
+
+# URL 编码
+url_encode() {
+    python3 -c "import urllib.parse; print(urllib.parse.quote('''$1''', safe=''))" 2>/dev/null || echo "$1"
+}
+
+# 显示帮助
+show_help() {
+    echo -e "${GREEN}Mihomo 订阅管理工具${NC}"
+    echo ""
+    echo "用法: mihomo-sub [命令] [选项]"
+    echo ""
+    echo "命令:"
+    echo "  add <url>               添加/更换订阅链接"
+    echo "  update                  更新当前订阅"
+    echo "  list                    列出可用备份"
+    echo "  restore [n]             恢复备份 (n为备份序号)"
+    echo "  show                    显示当前订阅URL"
+    echo "  test                    测试当前配置"
+    echo "  menu                    交互式菜单"
+    echo "  help                    显示帮助"
+    echo ""
+}
+
+# 检查 root 权限
+check_root() {
+    if [ "$EUID" -ne 0 ]; then
+        echo -e "${RED}请使用 sudo 运行此脚本${NC}"
+        exit 1
+    fi
+}
+
+# 备份配置
+backup_config() {
+    mkdir -p "$BACKUP_DIR"
+    if [ -f "$CONFIG_FILE" ]; then
+        local backup_name="config-$(date +%Y%m%d-%H%M%S).yaml"
+        cp "$CONFIG_FILE" "$BACKUP_DIR/$backup_name"
+        echo -e "${BLUE}已备份: $backup_name${NC}"
+    fi
+}
+
+# 下载并转换订阅
+download_and_convert() {
+    local url="$1"
+    local temp_file="/tmp/mihomo_config_$(date +%s).yaml"
+    
+    echo -e "${BLUE}下载订阅...${NC}"
+    
+    # 重试下载
+    for i in 1 2 3; do
+        if curl -sL --connect-timeout 10 --max-time 30 "$url" -o "$temp_file" 2>/dev/null; then
+            break
+        fi
+        echo -e "${YELLOW}第 $i 次下载失败，重试...${NC}"
+        sleep 2
+    done
+    
+    if [ ! -s "$temp_file" ]; then
+        echo -e "${RED}下载失败${NC}"
+        rm -f "$temp_file"
+        return 1
+    fi
+    
+    # 检测格式
+    if grep -q "^proxies:" "$temp_file" 2>/dev/null; then
+        echo -e "${GREEN}检测到 Clash/Mihomo 格式，无需转换${NC}"
+    else
+        echo -e "${YELLOW}尝试转换格式...${NC}"
+        
+        # 尝试 base64 解码
+        if base64 -d "$temp_file" > "${temp_file}.dec" 2>/dev/null; then
+            mv "${temp_file}.dec" "$temp_file"
+            echo -e "${GREEN}Base64 解码成功${NC}"
+        else
+            rm -f "${temp_file}.dec"
+        fi
+        
+        # 解码后再检测是否是 Clash 格式
+        if ! grep -q "^proxies:" "$temp_file" 2>/dev/null; then
+            echo -e "${YELLOW}使用在线服务转换为 Clash 格式...${NC}"
+            
+            # URL 编码
+            local enc_url=$(url_encode "$url")
+            local convert_url="${CONVERT_API}${enc_url}&insert=false&config="
+            
+            echo -e "${BLUE}转换 URL: ${convert_url:0:60}...${NC}"
+            
+            if ! curl -sL --connect-timeout 15 --max-time 60 "$convert_url" -o "$temp_file" 2>/dev/null; then
+                echo -e "${RED}转换 API 请求失败${NC}"
+                rm -f "$temp_file"
+                return 1
+            fi
+            
+            # 检查转换结果
+            if ! grep -q "^proxies:" "$temp_file" 2>/dev/null; then
+                echo -e "${RED}转换后的文件格式不正确${NC}"
+                echo -e "${YELLOW}响应内容: $(head -1 "$temp_file")${NC}"
+                rm -f "$temp_file"
+                return 1
+            fi
+            
+            echo -e "${GREEN}转换成功${NC}"
+        fi
+    fi
+    
+    # 检查并确保配置完整性
+    echo -e "${BLUE}检查配置完整性...${NC}"
+    
+    # 1. 确保有端口配置
+    local port=${MIHOMO_HTTP_PORT:-7890}
+    if ! grep -qE "^(port:|mixed-port:)" "$temp_file"; then
+        echo -e "${YELLOW}添加混合端口配置: $port${NC}"
+        echo "" >> "$temp_file"
+        echo "mixed-port: $port" >> "$temp_file"
+    fi
+    
+    # 2. 确保有 socks 端口
+    local socks_port=${MIHOMO_SOCKS_PORT:-7891}
+    if ! grep -qE "^(socks-port:)" "$temp_file"; then
+        echo "socks-port: $socks_port" >> "$temp_file"
+    fi
+    
+    # 3. 其他基本配置
+    grep -q "^allow-lan:" "$temp_file" || echo "allow-lan: true" >> "$temp_file"
+    grep -q "^mode:" "$temp_file" || echo "mode: rule" >> "$temp_file"
+    grep -q "^log-level:" "$temp_file" || echo "log-level: info" >> "$temp_file"
+    grep -q "^external-controller:" "$temp_file" || echo "external-controller: 127.0.0.1:9090" >> "$temp_file"
+    
+    # 4. 确保有规则部分
+    if ! grep -q "^rules:" "$temp_file"; then
+        echo -e "${YELLOW}配置缺少规则部分，添加默认规则...${NC}"
+        echo "" >> "$temp_file"
+        echo "rules:" >> "$temp_file"
+        echo "  - MATCH,PROXY" >> "$temp_file"
+    fi
+    
+    # 验证配置
+    if command -v mihomo &> /dev/null; then
+        echo -e "${BLUE}验证配置...${NC}"
+        if ! mihomo -t -f "$temp_file" > /dev/null 2>&1; then
+            echo -e "${YELLOW}配置验证有警告:${NC}"
+            mihomo -t -f "$temp_file" 2>&1 | head -10
+            
+            read -p "配置验证有警告，是否继续应用? [y/N] " response
+            if [[ ! "$response" =~ ^[Yy]$ ]]; then
+                rm -f "$temp_file"
+                return 1
+            fi
+        else
+            echo -e "${GREEN}配置验证通过${NC}"
+        fi
+    fi
+    
+    # 备份并应用
+    backup_config
+    mv "$temp_file" "$CONFIG_FILE"
+    echo "$url" > "$SUB_FILE"
+    chmod 644 "$CONFIG_FILE"
+    
+    echo -e "${GREEN}配置已应用到: $CONFIG_FILE${NC}"
+    echo -e "${BLUE}文件大小: $(ls -lh "$CONFIG_FILE" | awk '{print $5}')${NC}"
+    echo -e "${BLUE}代理节点数: $(grep -c "^  - name:" "$CONFIG_FILE" 2>/dev/null || echo "未知")${NC}"
+    
+    return 0
+}
+
+# 添加订阅
+add_subscription() {
+    local url="$1"
+    
+    if [ -z "$url" ]; then
+        read -p "请输入订阅链接: " url
+    fi
+    
+    if [ -z "$url" ]; then
+        echo -e "${RED}订阅链接不能为空${NC}"
+        return 1
+    fi
+    
+    if download_and_convert "$url"; then
+        echo ""
+        read -p "是否立即重启 Mihomo? [Y/n] " response
+        if [[ ! "$response" =~ ^[Nn]$ ]]; then
+            restart_mihomo
+        fi
+    fi
+}
+
+# 更新当前订阅
+update_subscription() {
+    if [ ! -f "$SUB_FILE" ]; then
+        echo -e "${RED}无订阅文件，请先添加订阅${NC}"
+        return 1
+    fi
+    
+    local url=$(cat "$SUB_FILE")
+    echo -e "${BLUE}更新订阅: $url${NC}"
+    
+    if download_and_convert "$url"; then
+        echo -e "${GREEN}订阅更新成功${NC}"
+        
+        # 检查服务状态
+        if systemctl is-active --quiet mihomo 2>/dev/null; then
+            echo ""
+            read -p "是否重启 Mihomo 服务? [Y/n] " response
+            if [[ ! "$response" =~ ^[Nn]$ ]]; then
+                restart_mihomo
+            fi
+        fi
+    fi
+}
+
+# 列出备份
+list_backups() {
+    if [ ! -d "$BACKUP_DIR" ] || [ -z "$(ls -A "$BACKUP_DIR" 2>/dev/null)" ]; then
+        echo -e "${YELLOW}没有可用的备份${NC}"
+        return 1
+    fi
+    
+    echo -e "${GREEN}可用备份:${NC}"
+    local i=1
+    for f in $(ls -t "$BACKUP_DIR"/*.yaml 2>/dev/null); do
+        [ -f "$f" ] || continue
+        local size=$(ls -lh "$f" | awk '{print $5}')
+        local mtime=$(stat -c %y "$f" 2>/dev/null | cut -d'.' -f1)
+        echo "  $i. $(basename "$f") [$size] $mtime"
+        ((i++))
+    done
+    return 0
+}
+
+# 恢复备份
+restore_backup() {
+    local choice="$1"
+    
+    if ! list_backups; then
+        return 1
+    fi
+    
+    if [ -z "$choice" ]; then
+        read -p "选择要恢复的备份 (0取消): " choice
+    fi
+    
+    [ "$choice" = "0" ] && return 0
+    
+    local selected=$(ls -t "$BACKUP_DIR"/*.yaml 2>/dev/null | sed -n "${choice}p")
+    if [ -f "$selected" ]; then
+        backup_config
+        cp "$selected" "$CONFIG_FILE"
+        echo -e "${GREEN}已恢复: $(basename "$selected")${NC}"
+        
+        read -p "是否立即重启 Mihomo? [Y/n] " response
+        if [[ ! "$response" =~ ^[Nn]$ ]]; then
+            restart_mihomo
+        fi
+    else
+        echo -e "${RED}无效选择${NC}"
+        return 1
+    fi
+}
+
+# 显示当前订阅
+show_subscription() {
+    if [ -f "$SUB_FILE" ]; then
+        echo -e "${GREEN}当前订阅:${NC}"
+        cat "$SUB_FILE"
+    else
+        echo -e "${YELLOW}无订阅文件${NC}"
+    fi
+}
+
+# 测试配置
+test_config() {
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo -e "${RED}配置文件不存在${NC}"
+        return 1
+    fi
+    
+    echo -e "${BLUE}测试配置文件...${NC}"
+    if mihomo -t -f "$CONFIG_FILE" 2>&1; then
+        echo -e "${GREEN}配置验证通过!${NC}"
+    else
+        echo -e "${RED}配置验证失败${NC}"
+        return 1
+    fi
+}
+
+# 重启 Mihomo
+restart_mihomo() {
+    echo -e "${BLUE}重启 Mihomo...${NC}"
+    
+    if systemctl is-active --quiet mihomo 2>/dev/null; then
+        systemctl restart mihomo
+    else
+        systemctl start mihomo
+    fi
+    
+    sleep 1
+    if systemctl is-active --quiet mihomo 2>/dev/null; then
+        echo -e "${GREEN}Mihomo 已启动${NC}"
+        systemctl status mihomo --no-pager
+    else
+        echo -e "${RED}Mihomo 启动失败${NC}"
+        systemctl status mihomo --no-pager
+        return 1
+    fi
+}
+
+# 交互式菜单
+menu() {
+    while true; do
+        echo ""
+        echo -e "${GREEN}=== Mihomo 订阅管理 ===${NC}"
+        echo "1. 添加/更换订阅链接"
+        echo "2. 更新当前订阅"
+        echo "3. 重启 Mihomo"
+        echo "4. 恢复备份配置"
+        echo "5. 查看当前订阅"
+        echo "6. 测试配置"
+        echo "0. 退出"
+        echo ""
+        read -p "选择: " c
+        
+        case $c in
+            1)
+                read -p "订阅链接: " url
+                [ -n "$url" ] && add_subscription "$url"
+                ;;
+            2)
+                update_subscription
+                ;;
+            3)
+                restart_mihomo
+                ;;
+            4)
+                restore_backup
+                ;;
+            5)
+                show_subscription
+                ;;
+            6)
+                test_config
+                ;;
+            0)
+                exit 0
+                ;;
+            *)
+                echo -e "${RED}无效选择${NC}"
+                ;;
+        esac
+        
+        echo ""
+        read -p "按回车继续..."
+    done
+}
+
+# 主函数
+main() {
+    check_root
+    
+    # 创建必要目录
+    mkdir -p "$CONFIG_DIR" "$BACKUP_DIR"
+    
+    case "$1" in
+        add)
+            add_subscription "$2"
+            ;;
+        update)
+            update_subscription
+            ;;
+        list)
+            list_backups
+            ;;
+        restore)
+            restore_backup "$2"
+            ;;
+        show)
+            show_subscription
+            ;;
+        test)
+            test_config
+            ;;
+        menu)
+            menu
+            ;;
+        help|--help|-h)
+            show_help
+            ;;
+        *)
+            menu
+            ;;
+    esac
+}
+
+main "$@"
