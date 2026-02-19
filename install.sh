@@ -82,7 +82,7 @@ install_deps() {
     esac
 }
 
-# 下载 mihomo - 支持自动和手动下载
+# 下载 mihomo - 支持自动下载或本地文件
 download_mihomo() {
     echo -e "${BLUE}下载 mihomo...${NC}"
     
@@ -105,33 +105,55 @@ download_mihomo() {
     else
         echo -e "${RED}自动下载失败，可能网络无法访问 GitHub${NC}"
         echo ""
-        echo -e "${YELLOW}请手动输入 mihomo 下载地址:${NC}"
-        echo -e "${BLUE}提示: 你可以从以下地址获取:${NC}"
+        echo -e "${YELLOW}请手动下载 mihomo 的 .gz 文件，然后输入本地文件路径${NC}"
+        echo -e "${BLUE}下载地址:${NC}"
         echo -e "  1. https://github.com/MetaCubeX/mihomo/releases"
         echo -e "  2. 镜像站如: https://gh-proxy.com/github.com/MetaCubeX/mihomo/releases"
         echo ""
-        echo -e "${YELLOW}请输入下载地址 (例如: https://example.com/mihomo-linux-${MIHOMO_ARCH}-compatible.gz):${NC}"
-        read -r MANUAL_URL
+        echo -e "${BLUE}需要下载的文件名格式: mihomo-linux-${MIHOMO_ARCH}-compatible.gz${NC}"
+        echo ""
+        echo -e "${YELLOW}请输入本地 .gz 文件的绝对路径 (例如: /home/user/downloads/mihomo-linux-${MIHOMO_ARCH}-compatible.gz):${NC}"
+        read -r LOCAL_FILE
         
-        if [ -z "$MANUAL_URL" ]; then
-            echo -e "${RED}未提供下载地址，退出安装${NC}"
+        if [ -z "$LOCAL_FILE" ]; then
+            echo -e "${RED}未提供文件路径，退出安装${NC}"
             rm -rf "$TMP_DIR"
             exit 1
         fi
         
-        echo -e "${BLUE}从手动地址下载: $MANUAL_URL${NC}"
-        if ! curl -L --connect-timeout 30 --max-time 120 -o mihomo.gz "$MANUAL_URL"; then
-            echo -e "${RED}手动下载也失败了，请检查地址是否正确${NC}"
+        # 展开 ~ 为家目录
+        LOCAL_FILE="${LOCAL_FILE/#\~/$HOME}"
+        
+        if [ ! -f "$LOCAL_FILE" ]; then
+            echo -e "${RED}文件不存在: $LOCAL_FILE${NC}"
             rm -rf "$TMP_DIR"
             exit 1
         fi
-        echo -e "${GREEN}手动下载成功!${NC}"
+        
+        # 检查文件扩展名
+        if [[ "$LOCAL_FILE" != *.gz ]]; then
+            echo -e "${YELLOW}警告: 文件不是 .gz 格式，尝试直接使用...${NC}"
+            cp "$LOCAL_FILE" mihomo
+        else
+            cp "$LOCAL_FILE" mihomo.gz
+        fi
+        
+        echo -e "${GREEN}使用本地文件: $LOCAL_FILE${NC}"
     fi
     
-    # 解压和安装
-    echo -e "${BLUE}解压文件...${NC}"
-    if ! gunzip mihomo.gz 2>/dev/null; then
-        echo -e "${RED}解压失败，文件可能损坏${NC}"
+    # 如果存在 mihomo.gz 则解压
+    if [ -f "mihomo.gz" ]; then
+        echo -e "${BLUE}解压文件...${NC}"
+        if ! gunzip mihomo.gz 2>/dev/null; then
+            echo -e "${RED}解压失败，文件可能损坏${NC}"
+            rm -rf "$TMP_DIR"
+            exit 1
+        fi
+    fi
+    
+    # 检查文件是否存在且可执行
+    if [ ! -f "mihomo" ]; then
+        echo -e "${RED}未找到 mihomo 可执行文件${NC}"
         rm -rf "$TMP_DIR"
         exit 1
     fi
