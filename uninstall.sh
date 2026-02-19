@@ -25,6 +25,9 @@ echo -e "${BLUE}删除透明代理规则...${NC}"
 
 echo -e "${BLUE}删除文件...${NC}"
 rm -f /usr/local/bin/mihomo
+rm -f /usr/local/bin/mihomo-config
+rm -f /usr/local/bin/mihomo-convert
+rm -f /usr/local/bin/mihomo-update
 rm -rf /etc/mihomo
 rm -f /etc/systemd/system/mihomo.service
 rm -f /etc/profile.d/mihomo-proxy.sh

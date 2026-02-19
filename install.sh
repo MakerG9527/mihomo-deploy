@@ -82,10 +82,11 @@ install_deps() {
     esac
 }
 
-# 下载 mihomo
+# 下载 mihomo - 支持自动和手动下载
 download_mihomo() {
     echo -e "${BLUE}下载 mihomo...${NC}"
     
+    # 构建默认下载 URL
     if [ "$MIHOMO_VERSION" = "latest" ]; then
         DOWNLOAD_URL="https://github.com/MetaCubeX/mihomo/releases/latest/download/mihomo-linux-${MIHOMO_ARCH}-compatible.gz"
     else
@@ -95,13 +96,46 @@ download_mihomo() {
     TMP_DIR=$(mktemp -d)
     cd "$TMP_DIR"
     
-    echo -e "${BLUE}从 $DOWNLOAD_URL 下载...${NC}"
-    curl -L -o mihomo.gz "$DOWNLOAD_URL" || {
-        echo -e "${RED}下载失败${NC}"
-        exit 1
-    }
+    # 尝试自动下载
+    echo -e "${BLUE}尝试从 GitHub 下载...${NC}"
+    echo -e "${YELLOW}URL: $DOWNLOAD_URL${NC}"
     
-    gunzip mihomo.gz
+    if curl -L --connect-timeout 30 --max-time 120 -o mihomo.gz "$DOWNLOAD_URL" 2>/dev/null; then
+        echo -e "${GREEN}自动下载成功!${NC}"
+    else
+        echo -e "${RED}自动下载失败，可能网络无法访问 GitHub${NC}"
+        echo ""
+        echo -e "${YELLOW}请手动输入 mihomo 下载地址:${NC}"
+        echo -e "${BLUE}提示: 你可以从以下地址获取:${NC}"
+        echo -e "  1. https://github.com/MetaCubeX/mihomo/releases"
+        echo -e "  2. 镜像站如: https://gh-proxy.com/github.com/MetaCubeX/mihomo/releases"
+        echo ""
+        echo -e "${YELLOW}请输入下载地址 (例如: https://example.com/mihomo-linux-${MIHOMO_ARCH}-compatible.gz):${NC}"
+        read -r MANUAL_URL
+        
+        if [ -z "$MANUAL_URL" ]; then
+            echo -e "${RED}未提供下载地址，退出安装${NC}"
+            rm -rf "$TMP_DIR"
+            exit 1
+        fi
+        
+        echo -e "${BLUE}从手动地址下载: $MANUAL_URL${NC}"
+        if ! curl -L --connect-timeout 30 --max-time 120 -o mihomo.gz "$MANUAL_URL"; then
+            echo -e "${RED}手动下载也失败了，请检查地址是否正确${NC}"
+            rm -rf "$TMP_DIR"
+            exit 1
+        fi
+        echo -e "${GREEN}手动下载成功!${NC}"
+    fi
+    
+    # 解压和安装
+    echo -e "${BLUE}解压文件...${NC}"
+    if ! gunzip mihomo.gz 2>/dev/null; then
+        echo -e "${RED}解压失败，文件可能损坏${NC}"
+        rm -rf "$TMP_DIR"
+        exit 1
+    fi
+    
     chmod +x mihomo
     
     echo -e "${BLUE}安装到 $INSTALL_DIR...${NC}"
@@ -161,23 +195,6 @@ proxy-groups:
     type: select
     proxies:
       - "direct"
-      # - "自动选择"
-      # - "故障转移"
-
-  # - name: "自动选择"
-  #   type: url-test
-  #   url: https://www.gstatic.com/generate_204
-  #   interval: 300
-  #   tolerance: 50
-  #   use:
-  #     - provider1
-
-  # - name: "故障转移"
-  #   type: fallback
-  #   url: https://www.gstatic.com/generate_204
-  #   interval: 300
-  #   proxies:
-  #     - "自动选择"
 
   - name: "🎯 全球直连"
     type: select
@@ -385,6 +402,35 @@ start_service() {
     fi
 }
 
+# 安装工具脚本
+install_tools() {
+    echo -e "${BLUE}安装工具脚本...${NC}"
+    
+    # 获取脚本所在目录
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    
+    # 安装 mihomo-config
+    if [ -f "$SCRIPT_DIR/mihomo-config" ]; then
+        cp "$SCRIPT_DIR/mihomo-config" "$INSTALL_DIR/"
+        chmod +x "$INSTALL_DIR/mihomo-config"
+        echo -e "${GREEN}mihomo-config 已安装${NC}"
+    fi
+    
+    # 安装 mihomo-convert
+    if [ -f "$SCRIPT_DIR/mihomo-convert" ]; then
+        cp "$SCRIPT_DIR/mihomo-convert" "$INSTALL_DIR/"
+        chmod +x "$INSTALL_DIR/mihomo-convert"
+        echo -e "${GREEN}mihomo-convert 已安装${NC}"
+    fi
+    
+    # 安装更新脚本
+    if [ -f "$SCRIPT_DIR/update.sh" ]; then
+        cp "$SCRIPT_DIR/update.sh" "$INSTALL_DIR/mihomo-update"
+        chmod +x "$INSTALL_DIR/mihomo-update"
+        echo -e "${GREEN}mihomo-update 已安装${NC}"
+    fi
+}
+
 # 显示使用说明
 show_usage() {
     echo ""
@@ -396,6 +442,16 @@ show_usage() {
     echo "  systemctl restart mihomo  # 重启服务"
     echo "  systemctl status mihomo   # 查看状态"
     echo "  mihomo -v                 # 查看版本"
+    echo ""
+    echo -e "${BLUE}配置工具:${NC}"
+    echo "  mihomo-config status      # 查看配置状态"
+    echo "  mihomo-config add-sub <url> [name]  # 添加订阅"
+    echo "  mihomo-config list-subs   # 列出订阅"
+    echo "  mihomo-config edit        # 编辑配置"
+    echo ""
+    echo -e "${BLUE}URL 转换:${NC}"
+    echo "  mihomo-convert 'ss://...' # 转换节点链接"
+    echo "  mihomo-convert -o nodes.yaml 'https://sub-url'"
     echo ""
     echo -e "${BLUE}配置文件:${NC}"
     echo "  $CONFIG_DIR/config.yaml   # 主配置文件"
@@ -422,6 +478,7 @@ main() {
     setup_config_dir
     setup_systemd
     setup_global_proxy
+    install_tools
     show_usage
     start_service
 }
