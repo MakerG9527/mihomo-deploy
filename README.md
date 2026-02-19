@@ -6,13 +6,13 @@
 
 - 🚀 一键安装 Mihomo（原 Clash.Meta）
 - 🔧 自动检测系统架构
-- ⚙️ 自动生成默认配置文件
+- 📦 集成 systemd 服务
 - 🌍 支持全局 HTTP/HTTPS/SOCKS5 代理
 - 🔀 支持 TPROXY 透明代理
-- 📦 集成 systemd 服务
-- 📥 下载失败时支持手动输入下载地址
-- 🔄 订阅管理工具 (mihomo-sub)
-- 🔧 配置管理工具 (mihomo-config)
+- 📥 **先询问本地文件，支持离线安装**
+- 🔄 交互式订阅管理 (mihomo-sub)
+- ⚙️ 配置管理工具 (mihomo-config)
+- 🚫 可选禁用 GEOIP 规则
 
 ## 快速开始
 
@@ -30,67 +30,47 @@ cd mihomo-deploy
 sudo bash install.sh
 ```
 
-**注意：** 如果自动下载失败，脚本会提示你手动输入 mihomo 的下载地址。
+### 安装流程
+
+1. **询问是否有本地压缩包** - 如果有，直接指定本地 `.gz` 文件路径
+2. **如果没有，自动下载** - 尝试多个镜像源
+3. **交互式配置** - 询问是否立即配置订阅和启动服务
 
 ## 工具命令
-
-安装后会提供以下命令行工具：
 
 ### mihomo-sub - 订阅管理
 
 ```bash
-# 添加订阅链接
-sudo mihomo-sub add "https://your-subscription-url"
-
-# 更新当前订阅
-sudo mihomo-sub update
-
-# 列出可用备份
-sudo mihomo-sub list
-
-# 恢复备份
-sudo mihomo-sub restore 1
-
-# 查看当前订阅
-sudo mihomo-sub show
-
-# 测试配置
-sudo mihomo-sub test
-
 # 交互式菜单
-sudo mihomo-sub menu
+sudo mihomo-sub
+
+# 命令行操作
+sudo mihomo-sub add "https://your-subscription-url"   # 添加订阅
+sudo mihomo-sub update                                 # 更新订阅
+sudo mihomo-sub list                                   # 列出备份
+sudo mihomo-sub restore 1                              # 恢复备份
+sudo mihomo-sub show                                   # 显示当前订阅
+sudo mihomo-sub test                                   # 测试配置
 ```
 
 **订阅管理功能：**
-- 自动检测订阅格式（Base64、Clash YAML 等）
-- 自动格式转换（使用在线 API）
-- 自动补充必要配置项（端口、规则等）
-- 自动备份历史配置
-- 支持一键恢复
+- ✅ 自动检测订阅格式（Base64、Clash YAML 等）
+- ✅ 自动格式转换（使用在线 API）
+- ✅ 自动补充必要配置项（端口、规则等）
+- ✅ **可选禁用 GEOIP 规则**（避免验证警告）
+- ✅ 配置验证
+- ✅ 自动备份历史配置
+- ✅ 支持一键恢复
 
 ### mihomo-config - 配置管理
 
 ```bash
-# 查看状态
-sudo mihomo-config status
-
-# 设置端口
-sudo mihomo-config set-port 7890
-sudo mihomo-config set-mixed-port 7892
-
-# 启用/禁用透明代理
-sudo mihomo-config enable-tproxy
-sudo mihomo-config disable-tproxy
-
-# 测试配置
-sudo mihomo-config test
-
-# 编辑配置
-sudo mihomo-config edit
-
-# 备份和恢复
-sudo mihomo-config backup
-sudo mihomo-config restore /etc/mihomo/config.yaml.backup.xxx
+sudo mihomo-config status      # 查看配置状态
+sudo mihomo-config edit        # 编辑配置
+sudo mihomo-config test        # 测试配置
+sudo mihomo-config backup      # 备份配置
+sudo mihomo-config enable-tproxy   # 启用透明代理
+sudo mihomo-config disable-tproxy  # 禁用透明代理
 ```
 
 ## 使用方法
@@ -151,21 +131,40 @@ sudo /etc/mihomo/disable-tproxy.sh
 ### 使用 mihomo-sub 添加订阅
 
 ```bash
-# 添加订阅（支持多种格式）
 sudo mihomo-sub add "https://your-subscription-url"
-
-# 脚本会自动：
-# 1. 下载订阅内容
-# 2. 检测并转换格式（Base64/V2Ray/Clash）
-# 3. 补充端口、规则等必要配置
-# 4. 验证配置有效性
-# 5. 备份旧配置
-# 6. 应用新配置
 ```
+
+**流程：**
+1. 下载订阅内容
+2. 检测格式（Base64/V2Ray/Clash）
+3. 自动转换格式（如有需要）
+4. 补充端口、规则等配置
+5. **询问是否禁用 GEOIP 规则**
+6. 验证配置有效性
+7. 备份旧配置
+8. 应用新配置
+9. 询问是否重启服务
+
+### 手动安装（离线模式）
+
+如果服务器无法访问互联网：
+
+1. 在本地下载 Mihomo：
+   ```bash
+   # 访问 https://github.com/MetaCubeX/mihomo/releases
+   # 下载对应架构的文件，如: mihomo-linux-amd64-v1.18.10.gz
+   ```
+
+2. 上传到服务器，然后运行安装脚本：
+   ```bash
+   sudo bash install.sh
+   # 选择 "使用本地文件"
+   # 输入文件路径: /path/to/mihomo-linux-amd64-v1.18.10.gz
+   ```
 
 ### 手动配置节点
 
-如果只有单个节点链接，可以手动编辑配置文件：
+如果只有单个节点，可以手动编辑配置：
 
 ```bash
 sudo nano /etc/mihomo/config.yaml
@@ -187,36 +186,16 @@ proxies:
     ws-opts:
       path: /path
 
-  - name: "美国节点"
-    type: ss
-    server: us.example.com
-    port: 8388
-    cipher: aes-256-gcm
-    password: your-password
-
 proxy-groups:
   - name: "🚀 节点选择"
     type: select
     proxies:
       - "香港节点"
-      - "美国节点"
-
-  - name: "🎯 全球直连"
-    type: select
-    proxies:
-      - DIRECT
-
-  - name: "🐟 漏网之鱼"
-    type: select
-    proxies:
-      - "🚀 节点选择"
       - DIRECT
 
 rules:
-  - DOMAIN-SUFFIX,local,DIRECT
-  - IP-CIDR,127.0.0.0/8,DIRECT
   - GEOIP,CN,DIRECT
-  - MATCH,🐟 漏网之鱼
+  - MATCH,🚀 节点选择
 ```
 
 ## 目录结构
@@ -265,11 +244,7 @@ sudo systemctl daemon-reload
 sudo mihomo-update
 ```
 
-或：
-
-```bash
-sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/MakerG9527/mihomo-deploy/main/update.sh)"
-```
+更新流程与安装相同：先询问是否有本地文件，如果没有则自动下载。
 
 ## 系统支持
 
